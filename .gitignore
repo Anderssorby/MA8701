@@ -102,3 +102,8 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# We don't want to upload this
+*.png
+*.csv
+*.zip
