@@ -2,6 +2,7 @@ import os
 from argparse import ArgumentParser
 
 import pandas as pd
+import numpy as np
 from keras.layers import Dense
 from keras.models import Sequential
 from keras.optimizers import Adam
@@ -41,8 +42,14 @@ def load_data():
     train_desc.fillna(" ", inplace=True)
     test_desc.fillna(" ", inplace=True)
 
-    # word embedding
-    train_x, test_x = bag_of_words(train_desc, test_desc)
+    bow_file = "bow.npy"
+    if not os.path.isfile(bow_file):
+        # word embedding
+        train_x, test_x = bag_of_words(train_desc, test_desc)
+
+        np.save(bow_file, (train_x, test_x))
+    else:
+        train_x, test_x = np.load(bow_file)
 
     return train_x, train_y, test_x, test_y
 
@@ -134,7 +141,7 @@ if __name__ == "__main__":
 
     hyp = ap.add_argument_group("hyper_parameters")
     hyp.add_argument('--lr', help="learning rate", type=int, default=0.05)
-    ap.add_argument('--epochs', help="Number of training epochs", type=int, default=0.05)
+    ap.add_argument('--epochs', help="Number of training epochs", type=int, default=100)
 
     ap.add_argument('--model-filename', '-f', dest="model_filename", type=str, default="deep_model.h5")
 
