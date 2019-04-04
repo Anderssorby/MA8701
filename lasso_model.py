@@ -24,57 +24,59 @@ data = pd.read_csv('train.csv', usecols=['price', 'description', 'item_seq_numbe
 # Extract a nicer amount of data
 data = data.sample(train_size+test_size, random_state = 8701)
 # Replace missing values, create missing price variable
-data['missingprice'] = data['price'].isna()
+data['missing_price'] = data['price'].isna()
 data['item_seq_number'].fillna(0, inplace=True)
 data['description'].fillna(" ", inplace=True)
-data['desclength'] = data['description'].str.len()
+data['desc_length'] = data['description'].str.len()
 
 # Split data into train and test data
-traindata = data[:train_size]
-testdata = data[train_size:]
+train_data = data[:train_size]
+test_data = data[train_size:]
 data=0
 
-trainprice, trainmissingprice, traindesc, traindesclength, trainitemnum, train_category, trainY = traindata['price'], traindata['missingprice'], traindata['description'], traindata['desclength'], traindata['item_seq_number'], traindata['category_name'], traindata['deal_probability']
-traincategory = pd.get_dummies(pd.Categorical(train_category), prefix = 'category')
-testprice, testmissingprice, testdesc, testdesclength, testitemnum, testcategory, testY = testdata['price'], testdata['missingprice'], testdata['description'], testdata['desclength'], testdata['item_seq_number'], testdata['category_name'], testdata['deal_probability']
-testcategory = pd.get_dummies(pd.Categorical(testcategory), prefix = 'category')
+train_price, train_missing_price, train_desc, train_desc_length, train_item_num, train_category, trainY = train_data['price'], train_data['missing_price'], train_data['description'], train_data['desc_length'], train_data['item_seq_number'], train_data['category_name'], train_data['deal_probability']
+
+test_price, test_missing_price, test_desc, test_desc_length, test_item_num, test_category, testY = test_data['price'], test_data['missing_price'], test_data['description'], test_data['desc_length'], test_data['item_seq_number'], test_data['category_name'], test_data['deal_probability']
+test_category = pd.get_dummies(pd.Categorical(test_category), prefix = 'category')
 
 if price_ratio:
-    df = pd.concat([trainprice,train_category], axis=1)
+    df = pd.concat([train_price,train_category], axis=1)
     df.dropna(subset=['price'])
-    categorymeans = np.asmatrix(df.groupby('category_name').mean()) #Calculate mean price within each category, NaNs excluded
+    category_means = np.asmatrix(df.groupby('category_name').mean()) #Calculate mean price within each category, NaNs excluded
     df = 0
 else:
-    trainprice.fillna(0, inplace=True)
-    testprice.fillna(0, inplace=True)
+    train_price.fillna(0, inplace=True)
+    test_price.fillna(0, inplace=True)
+
+train_category = pd.get_dummies(pd.Categorical(train_category), prefix = 'category')
 
 #Convert dataframes to numpy arrays
-trainprice = np.transpose(np.asmatrix(trainprice))
-testprice = np.transpose(np.asmatrix(testprice))
-trainmissingprice = np.transpose(np.asmatrix(trainmissingprice))
-testmissingprice = np.transpose(np.asmatrix(testmissingprice))
-trainitemnum = np.transpose(np.asmatrix(trainitemnum))
-testitemnum = np.transpose(np.asmatrix(testitemnum))
-traincategory = np.asmatrix(traincategory)
-testcategory = np.asmatrix(testcategory)
-traindesclength = np.transpose(np.asmatrix(traindesclength))
-testdesclength = np.transpose(np.asmatrix(testdesclength))
+train_price = np.transpose(np.asmatrix(train_price))
+test_price = np.transpose(np.asmatrix(test_price))
+train_missing_price = np.transpose(np.asmatrix(train_missing_price))
+test_missing_price = np.transpose(np.asmatrix(test_missing_price))
+train_item_num = np.transpose(np.asmatrix(train_item_num))
+test_item_num = np.transpose(np.asmatrix(test_item_num))
+train_category = np.asmatrix(train_category)
+test_category = np.asmatrix(test_category)
+train_desc_length = np.transpose(np.asmatrix(train_desc_length))
+test_desc_length = np.transpose(np.asmatrix(test_desc_length))
 
 if price_ratio:
     for i in range(train_size): #Divide price by category mean from training set, NaN price ratios are set to 1
-        cat = np.nonzero(traincategory[i])[1][0]
-        trainprice[i] = 1 if math.isnan(trainprice[i]) else trainprice[i]/categorymeans[cat]
+        cat = np.nonzero(train_category[i])[1][0]
+        train_price[i] = 1 if math.isnan(train_price[i]) else train_price[i]/category_means[cat]
 
     for i in range(test_size): #Same for test set, using means from training set
-        cat = np.nonzero(testcategory[i])[1][0]
-        testprice[i] = 1 if math.isnan(testprice[i]) else testprice[i]/categorymeans[cat]
+        cat = np.nonzero(test_category[i])[1][0]
+        test_price[i] = 1 if math.isnan(test_price[i]) else test_price[i]/category_means[cat]
 else:
-    trainpricecut = np.percentile(trainprice,80) #Cuts prices larger than the 80th percentile
-    for i in range(trainprice.shape[0]): #Requires the test set to be at least as large as the training set
-        if trainprice[i,0] > trainpricecut:
-            trainprice[i,0] = trainpricecut
-        if testprice[i,0] > trainpricecut:
-            testprice[i,0] = trainpricecut
+    train_pricecut = np.percentile(train_price,80) #Cuts prices larger than the 80th percentile
+    for i in range(train_price.shape[0]): #Requires the test set to be at least as large as the training set
+        if train_price[i,0] > train_pricecut:
+            train_price[i,0] = train_pricecut
+        if test_price[i,0] > train_pricecut:
+            test_price[i,0] = train_pricecut
 
 ## Get "bag of words" transformation of the data
 vec = TfidfVectorizer(ngram_range=(1, 1),
@@ -84,24 +86,24 @@ vec = TfidfVectorizer(ngram_range=(1, 1),
                       strip_accents='unicode',
                       sublinear_tf=True)
 
-trainX = vec.fit_transform(traindesc)
-testX = vec.transform(testdesc)
+trainX = vec.fit_transform(train_desc)
+testX = vec.transform(test_desc)
 
 print(trainX.shape)
 
 #plt.figure()
-#plt.hist(trainprice)
+#plt.hist(train_price)
 #plt.show()
-#plt.plot(trainprice, trainY, 'b.')
+#plt.plot(train_price, trainY, 'b.')
 #plt.show()
 
 #Add all numeric features
-trainX = np.append(trainX.todense(),trainprice,1)
-trainX = np.append(trainX,trainitemnum,1)
-trainX = np.append(trainX,traindesclength,1)
-testX = np.append(testX.todense(),testprice,1)
-testX = np.append(testX,testitemnum,1)
-testX = np.append(testX,testdesclength,1)
+trainX = np.append(trainX.todense(),train_price,1)
+trainX = np.append(trainX,train_item_num,1)
+trainX = np.append(trainX,train_desc_length,1)
+testX = np.append(testX.todense(),test_price,1)
+testX = np.append(testX,test_item_num,1)
+testX = np.append(testX,test_desc_length,1)
 
 #Standardize numeric features
 scaler = StandardScaler()
@@ -110,10 +112,10 @@ trainX = scaler.transform(trainX)
 testX = scaler.transform(testX)
 
 #Add categorical features
-trainX = np.append(trainX,trainmissingprice,1)
-trainX = np.append(trainX,traincategory,1)
-testX = np.append(testX,testmissingprice,1)
-testX = np.append(testX,testcategory,1)
+trainX = np.append(trainX,train_missing_price,1)
+trainX = np.append(trainX,train_category,1)
+testX = np.append(testX,test_missing_price,1)
+testX = np.append(testX,test_category,1)
 
 print(trainX.shape)
 
