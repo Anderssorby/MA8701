@@ -248,7 +248,7 @@ if __name__ == "__main__":
         if not os.path.isfile(args.config):
             raise ValueError(args.config + " is not a file.")
         stream = open(args.config, 'r')
-        config = yaml.load(stream, Loader=yaml.FullLoader)
+        config = yaml.load(stream, Loader=yaml.Loader)
         kwargs.update(config)
 
     T = kwargs.get('sub_set', 30000)
