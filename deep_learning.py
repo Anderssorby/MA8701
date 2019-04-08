@@ -4,13 +4,13 @@ from argparse import ArgumentParser
 import matplotlib
 import numpy as np
 import pandas as pd
+import yaml
 from keras.callbacks import ProgbarLogger
 from keras.layers import Dense, LSTM, Dropout, Embedding, Activation, TimeDistributed
 from keras.models import Sequential
 from keras.optimizers import Adam
 from keras.preprocessing.sequence import pad_sequences
 from keras.preprocessing.text import Tokenizer
-from keras.utils import to_categorical
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.model_selection import train_test_split
 
@@ -18,28 +18,21 @@ if os.getenv("DISPLAY") is None:
     matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-# T is the length of data you want to run right now (the full dataset takes forever
-# mdf is for setting the min_df value in the TfidfVectorizer function (google is good)
-# -- when building the vocabulary for back of words ignore terms that have a document
-# frequency strictly lower than min_df
-
-T = 30000
-mdf = 50
-VALIDATION_SPLIT = 0.25
-MAX_NB_WORDS = 1000
-MAX_SEQUENCE_LENGTH = 1000
-GLOVE_DIR = "180"
-
 
 def load_data(word_embedding):
     # get data from csv files
-    data = pd.read_csv('train.csv', usecols=['description', 'deal_probability'])
-    desc = (data['description'])
+    data = pd.read_csv('train.csv',
+                       usecols=['description', 'deal_probability', 'region', 'city', 'parent_category_name',
+                                'category_name', 'price', 'param_1', 'param_2', 'param_3', 'title'])
+    desc = np.asarray([data['title'], data['description'], data['param_1'], data['param_2'], data['param_3']]).transpose()
+    region = pd.get_dummies(pd.Categorical(data['region']), prefix='category')
+    city = pd.get_dummies(pd.Categorical(data['city']), prefix='category')
     y = (data['deal_probability'])
+    data['desc_length'] = data['description'].str.len()
     del data
 
     if word_embedding:
-        return word_embeddings(desc, y)
+        word_index = word_embeddings(desc, y)
 
     # break up data into train and test data
     train_desc, test_desc, train_y, test_y = train_test_split(desc, y, test_size=VALIDATION_SPLIT, random_state=23)
@@ -49,13 +42,14 @@ def load_data(word_embedding):
     train_y = train_y[:T]
 
     # Replace nans with spaces
-    train_desc.fillna(" ", inplace=True)
-    test_desc.fillna(" ", inplace=True)
+    [t.fillna(" ", inplace=True) for t in train_desc.T]
 
     bow_file = "bow.npy"
     if not os.path.isfile(bow_file):
-        # word embedding
-        train_x, test_x = bag_of_words(train_desc, test_desc)
+        vec = bag_of_words()
+
+        train_x = vec.fit_transform(train_desc)
+        test_x = vec.transform(test_desc)
 
         np.save(bow_file, (train_x, test_x))
     else:
@@ -64,8 +58,7 @@ def load_data(word_embedding):
     return train_x, train_y, test_x, test_y
 
 
-def word_embeddings(desc, labels):
-    texts = desc  # list of text samples
+def word_embeddings(texts, labels):
     labels_index = {}  # dictionary mapping label name to numeric id
     # labels = []  # list of label ids
 
@@ -78,7 +71,7 @@ def word_embeddings(desc, labels):
 
     data = pad_sequences(sequences, maxlen=MAX_SEQUENCE_LENGTH)
 
-    labels = to_categorical(np.asarray(labels))
+    # labels = to_categorical(np.asarray(labels))
     print('Shape of data tensor:', data.shape)
     print('Shape of label tensor:', labels.shape)
 
@@ -96,12 +89,15 @@ def word_embeddings(desc, labels):
 
     return x_train, y_train, x_val, y_val
 
+
 def embedding_layer(word_index):
     embeddings_index = {}
-    f = open(os.path.join(GLOVE_DIR, 'glove.6B.100d.txt'))
+    f = open(os.path.join(GLOVE_DIR, 'model.txt'))
     for line in f:
         values = line.split()
-        word = values[0]
+        w = values[0].split("_")
+        word = w[0]
+        # wclass = w[1]
         coefs = np.asarray(values[1:], dtype='float32')
         embeddings_index[word] = coefs
     f.close()
@@ -124,8 +120,7 @@ def embedding_layer(word_index):
     return embedding_layer
 
 
-
-def bag_of_words(train_desc, test_desc):
+def bag_of_words():
     # Get "bag of words" transformation of the data -- see example in Lasso book discussed in class
     # also: https://scikit-learn.org/stable/modules/feature_extraction.html#text-feature-extraction
 
@@ -136,31 +131,38 @@ def bag_of_words(train_desc, test_desc):
                           strip_accents='unicode',
                           sublinear_tf=True)
 
-    train_x = vec.fit_transform(train_desc)
-    test_x = vec.transform(test_desc)
-
-    return train_x, test_x
+    return vec
 
 
-def create_simple_model(input_shape=1836):
+def create_simple_model(input_shape=1836, units_list=None, **kwargs):
     model = Sequential(name="dense")
 
-    model.add(Dense(100, input_dim=input_shape, activation="relu"))
+    if not units_list:
+        units_list = [1000, 100]
+
+    for units in units_list:
+        model.add(Dense(units=units, input_dim=input_shape, activation="relu"))
     model.add(Dense(1, activation="sigmoid"))
 
     return model
 
 
-def create_lstm_model(hidden_size=1836, use_dropout=True):
+def create_lstm_model(word_index, hidden_size=1836, use_dropout=True, **kwargs):
     model = Sequential(name="LSTM")
 
-    model.add(Embedding())
+    model.add(embedding_layer(word_index))
     model.add(LSTM(hidden_size, return_sequences=True))
     model.add(LSTM(hidden_size, return_sequences=True))
     if use_dropout:
         model.add(Dropout(0.5))
     model.add(TimeDistributed(Dense(vocabulary)))
     model.add(Activation('softmax'))
+
+
+models = {
+    "simple": create_simple_model,
+    "lstm": create_lstm_model
+}
 
 
 def plot_model_history(history):
@@ -185,7 +187,7 @@ def plot_model_history(history):
     plt.show()
 
 
-def train(train_x, train_y, model: Sequential, epochs,  **kwargs):
+def train(train_x, train_y, model: Sequential, epochs, **kwargs):
     progbar = ProgbarLogger()
 
     history = model.fit(
@@ -203,20 +205,21 @@ def main(lr, model_filename, **kwargs):
         word_embedding=kwargs["word_embedding"]
     )
     opt = Adam(lr=lr)
+    model_builder = models[kwargs['model']]
 
-    model = create_simple_model(train_x.shape[1])
+    model = model_builder(train_x.shape[1], **kwargs)
     model.compile(
         optimizer=opt,
         loss="mean_squared_error",
-        metrics=['acc'],
+        metrics=['acc', 'val_acc', 'val_loss'],
     )
     model.summary()
 
     train(train_x, train_y, model, **kwargs)
 
-    #score = model.test_on_batch(x=test_x, y=test_y)
+    # score = model.test_on_batch(x=test_x, y=test_y)
 
-    #print("Test score:", score)
+    # print("Test score:", score)
 
     model.save(model_filename, overwrite=False)
 
@@ -226,12 +229,34 @@ if __name__ == "__main__":
 
     hyp = ap.add_argument_group("hyper_parameters")
     hyp.add_argument('--lr', help="learning rate", type=int, default=0.05)
-    ap.add_argument('--epochs', help="Number of training epochs", type=int, default=10)
+    hyp.add_argument('--epochs', help="Number of training epochs", type=int, default=10)
 
-    ap.add_argument('--batch_size', '-b', help="The batch size", type=int, default=100)
+    hyp.add_argument('--batch_size', '-b', help="The batch size", type=int, default=100)
+    hyp.add_argument('--sub_set', '-T', dest='sub_set', type=int,
+                     help="The number of samples to draw from the training and test set",
+                     required=False)
+
     ap.add_argument('--word-embedding', dest="word_embedding", type=bool, default=False)
     ap.add_argument('--model-filename', '-f', dest="model_filename", type=str, default="deep_model.h5")
+    ap.add_argument('-c', '--config', dest='config', required=False)
+    ap.add_argument('--model', default="simple")
 
-    kwargs = vars(ap.parse_args())
+    args = ap.parse_args()
+    kwargs = vars(args)
+
+    if args.config:
+        if not os.path.isfile(args.config):
+            raise ValueError(args.config + " is not a file.")
+        stream = open(args.config, 'r')
+        config = yaml.load(stream, Loader=yaml.FullLoader)
+        kwargs.update(config)
+
+    T = kwargs.get('sub_set', 30000)
+    mdf = kwargs.get("mdf", 50)
+    VALIDATION_SPLIT = kwargs.get("validation_split", 0.25)
+    MAX_NB_WORDS = kwargs.get("max_nb_words", 1000)
+    MAX_SEQUENCE_LENGTH = kwargs.get("max_sequence_length", 1000)
+    EMBEDDING_DIM = kwargs.get("embedding_dim", 10000)
+    GLOVE_DIR = kwargs.get("glove_dir", "180")
+
     main(**kwargs)
-
