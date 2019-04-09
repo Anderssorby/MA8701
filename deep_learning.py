@@ -4,27 +4,31 @@ from argparse import ArgumentParser
 import matplotlib
 import numpy as np
 import pandas as pd
+import pickle
 import yaml
 from keras.callbacks import ProgbarLogger
 from keras.layers import Dense, LSTM, Dropout, Embedding, Activation, TimeDistributed
-from keras.models import Sequential
+from keras.models import Sequential, load_model
 from keras.optimizers import Adam
 from keras.preprocessing.sequence import pad_sequences
 from keras.preprocessing.text import Tokenizer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.model_selection import train_test_split
+import keras.backend as K
 
 if os.getenv("DISPLAY") is None:
     matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 
-def load_data(word_embedding):
+def load_data(word_embedding, filename='train.csv'):
     # get data from csv files
-    data = pd.read_csv('train.csv',
+    data = pd.read_csv(filename,
                        usecols=['description', 'deal_probability', 'region', 'city', 'parent_category_name',
                                 'category_name', 'price', 'param_1', 'param_2', 'param_3', 'title'])
-    desc = np.asarray([data['title'], data['description'], data['param_1'], data['param_2'], data['param_3']]).transpose()
+    print("Loaded data", data.shape)
+    desc = data['description']
+    # desc = pd.DataFrame([data['title'], data['description'], data['param_1'], data['param_2'], data['param_3']]).transpose()
     region = pd.get_dummies(pd.Categorical(data['region']), prefix='category')
     city = pd.get_dummies(pd.Categorical(data['city']), prefix='category')
     y = (data['deal_probability'])
@@ -34,26 +38,38 @@ def load_data(word_embedding):
     if word_embedding:
         word_index = word_embeddings(desc, y)
 
+    desc.fillna(" ", inplace=True)
+
     # break up data into train and test data
     train_desc, test_desc, train_y, test_y = train_test_split(desc, y, test_size=VALIDATION_SPLIT, random_state=23)
 
+
     # shrink training data to T
-    train_desc = train_desc[:T]
-    train_y = train_y[:T]
+    train_desc = train_desc[:sub_set]
+    train_y = train_y[:sub_set]
+    print(train_desc.shape)
 
     # Replace nans with spaces
-    [t.fillna(" ", inplace=True) for t in train_desc.T]
+    # [t.fillna(" ", inplace=True) for t in train_desc.flatten()]
 
-    bow_file = "bow.npy"
+    bow_file = "bow-%d" % sub_set
     if not os.path.isfile(bow_file):
         vec = bag_of_words()
 
         train_x = vec.fit_transform(train_desc)
         test_x = vec.transform(test_desc)
 
-        np.save(bow_file, (train_x, test_x))
+        pickler = pickle.Pickler(open(bow_file, "wb"))
+        pickler.dump(vec)
+        print("Pickled bow file", train_x.shape, bow_file)
+        # np.save(bow_file, vec)
     else:
-        train_x, test_x = np.load(bow_file)
+        # vec = np.load(bow_file)
+        pickler = pickle.Unpickler(open(bow_file, 'rb'))
+        vec = pickler.load()
+
+        train_x = vec.transform(train_desc)
+        test_x = vec.transform(test_desc)
 
     return train_x, train_y, test_x, test_y
 
@@ -123,7 +139,7 @@ def embedding_layer(word_index):
 def bag_of_words():
     # Get "bag of words" transformation of the data -- see example in Lasso book discussed in class
     # also: https://scikit-learn.org/stable/modules/feature_extraction.html#text-feature-extraction
-
+    print("mdf=", mdf)
     vec = TfidfVectorizer(ngram_range=(1, 1),
                           min_df=mdf,
                           max_df=0.9,
@@ -134,7 +150,7 @@ def bag_of_words():
     return vec
 
 
-def create_simple_model(input_shape=1836, units_list=None, **kwargs):
+def create_simple_model(input_shape, units_list=None, **kwargs):
     model = Sequential(name="dense")
 
     if not units_list:
@@ -147,7 +163,7 @@ def create_simple_model(input_shape=1836, units_list=None, **kwargs):
     return model
 
 
-def create_lstm_model(word_index, hidden_size=1836, use_dropout=True, **kwargs):
+def create_lstm_model(word_index, hidden_size, use_dropout=True, **kwargs):
     model = Sequential(name="LSTM")
 
     model.add(embedding_layer(word_index))
@@ -185,6 +201,7 @@ def plot_model_history(history):
     plt.legend(['Train', 'Test'], loc='upper left')
 
     plt.show()
+    plt.savefig(figure_filename)
 
 
 def train(train_x, train_y, test_x, test_y, model, epochs):
@@ -202,6 +219,34 @@ def train(train_x, train_y, test_x, test_y, model, epochs):
     plot_model_history(history.history)
 
 
+def kaggle_test(model_filename):
+    model = load_model(model_filename)
+    
+    filename = 'test.csv'
+    data = pd.read_csv(filename,
+                       usecols=['description', 'region', 'city', 'parent_category_name', 'item_id',
+                                'category_name', 'price', 'param_1', 'param_2', 'param_3', 'title'])
+    desc = data['description']
+    # desc = pd.DataFrame([data['title'], data['description'], data['param_1'], data['param_2'], data['param_3']]).transpose()
+    global sub_set
+    if not sub_set:
+        sub_set = 80000
+
+    bow_file = "bow-%d" % sub_set
+
+    vec = pickle.load(open(bow_file, 'rb'))
+
+    test_x = vec.fit_transform(desc)
+    result = model.predict(test_x)
+
+    dframe = pd.DataFrame(data={'item_id': data['item_id'], 'deal_probability': result})
+    dframe.to_csv(model_filename+".csv", index=False)
+
+
+def rmse(y_true, y_pred):
+    return K.sqrt(K.mean(K.square(y_true - y_pred)))
+
+
 def main(lr, model_filename, **kwargs):
     train_x, train_y, test_x, test_y = load_data(
         word_embedding=kwargs["word_embedding"]
@@ -209,10 +254,10 @@ def main(lr, model_filename, **kwargs):
     opt = Adam(lr=lr)
     model_builder = models[kwargs['model']]
 
-    model = model_builder(train_x.shape[1], **kwargs)
+    model = model_builder(input_shape=train_x.shape[1], **kwargs)
     model.compile(
         optimizer=opt,
-        loss="mean_squared_error",
+        loss=rmse,
         metrics=['acc'],
     )
     model.summary()
@@ -242,6 +287,7 @@ if __name__ == "__main__":
     ap.add_argument('--model-filename', '-f', dest="model_filename", type=str, default="deep_model.h5")
     ap.add_argument('-c', '--config', dest='config', required=False)
     ap.add_argument('--model', default="simple")
+    ap.add_argument('--kaggle', type=bool, default=False)
 
     args = ap.parse_args()
     kwargs = vars(args)
@@ -253,12 +299,19 @@ if __name__ == "__main__":
         config = yaml.load(stream, Loader=yaml.Loader)
         kwargs.update(config)
 
-    T = kwargs.get('sub_set', 30000)
+    sub_set = kwargs.get('sub_set', 30000)
     mdf = kwargs.get("mdf", 50)
     VALIDATION_SPLIT = kwargs.get("validation_split", 0.25)
     MAX_NB_WORDS = kwargs.get("max_nb_words", 1000)
     MAX_SEQUENCE_LENGTH = kwargs.get("max_sequence_length", 1000)
     EMBEDDING_DIM = kwargs.get("embedding_dim", 10000)
     GLOVE_DIR = kwargs.get("glove_dir", "180")
+    figure_filename = kwargs.get("figure_filename", "fig.png")
+    
+    print("kwargs", kwargs)
 
-    main(**kwargs)
+    if args.kaggle:
+        kaggle_test(kwargs['model_filename'])
+    else:
+        main(**kwargs)
+
