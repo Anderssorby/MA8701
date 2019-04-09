@@ -187,14 +187,16 @@ def plot_model_history(history):
     plt.show()
 
 
-def train(train_x, train_y, model: Sequential, epochs, **kwargs):
+def train(train_x, train_y, test_x, test_y, model, epochs):
     progbar = ProgbarLogger()
 
     history = model.fit(
         x=train_x,
         y=train_y,
         epochs=epochs,
-        callbacks=[progbar]
+        callbacks=[progbar],
+        #validation_freq=1,
+        validation_data=(test_x, test_y)
     )
 
     plot_model_history(history.history)
@@ -211,11 +213,11 @@ def main(lr, model_filename, **kwargs):
     model.compile(
         optimizer=opt,
         loss="mean_squared_error",
-        metrics=['acc', 'val_acc', 'val_loss'],
+        metrics=['acc'],
     )
     model.summary()
 
-    train(train_x, train_y, model, **kwargs)
+    train(train_x, train_y, test_x, test_y, model, epochs=kwargs['epochs'])
 
     # score = model.test_on_batch(x=test_x, y=test_y)
 

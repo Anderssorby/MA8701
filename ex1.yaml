@@ -1,3 +1,4 @@
 sub_set: 80000
 model: simple
 units_list: [1000, 500, 100]
+model_filename: "test1.h5"
